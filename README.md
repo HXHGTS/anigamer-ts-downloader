@@ -1,6 +1,14 @@
 # 动画疯 Tampermonkey TS 下载管理器
 
-配套脚本：`anigamer-download.user.js`，版本 1.0.0。
+配套脚本：`anigamer-download.user.js`，版本 1.0.1。
+
+## 1.0.1 管理页启动健壮性修复
+
+- `document-start` 时文档根节点可能尚未建立；管理分支在 `window.stop()` 后重新读取根节点，有根则替换、无根则直接挂载，不等待可能不再触发的 `DOMContentLoaded`。无效管理 ID 也先建立可见页面再提示。
+- stop、DOM 建壳与异步管理 UI 的异常统一显示为「管理器啟動失敗」，DOM 报错提示本身失败时退回 alert／控制台。没有改变播放、任务交付、下载、授权或加密逻辑。
+- 这是启动健壮性修复，不是已确认的现场根因：调用方现场用 1.0.0 新播放页点击按钮及手工管理 URL 均正常显示，未复现原空白。
+- 新增无依赖 `test-manager-dom.cjs`。运行 `node test-manager-dom.cjs` 可验证 9 项隔离 DOM 场景；`node test-manager-dom.cjs --baseline` 额外从 Git HEAD 读取旧版，在 mock 的根缺失、stop 清除根、无根且 ID 无效条件下复现旧版未捕获异常（HEAD 升级后不再适用旧版对照）。测试不访问网站、不下载、不执行解密。
+- 本次语法检查及 9 项隔离测试通过；mock 不证明真实浏览器解析器／Tampermonkey 注入时序，不能保证阻止脚本注入之前已执行的网站脚本。1.0.1 的实际安装与现场浏览器验证、完整下载验证仍需另行执行。
 
 ## 作用与边界
 

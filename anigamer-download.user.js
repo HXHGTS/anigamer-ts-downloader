@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         動畫瘋 已授權 HLS → TS 管理器
 // @namespace    local.anigamer.authorized-download
-// @version      1.0.0
+// @version      1.0.1
 // @description  在獨立同站頁面保存正常播放已授權的 VOD MPEG-TS；不繞過廣告、登入或 DRM。
 // @match        https://ani.gamer.com.tw/animeVideo.php*
 // @run-at       document-start
@@ -183,17 +183,41 @@
     return { title: document.querySelector('h1')?.textContent.trim() || '動畫', currentSN, episodes };
   }
   if (managerID !== null) {
-    // Stop before the site's player/ad scripts execute. Never run playback in this branch.
-    window.stop();
-    if (!idOK(managerID)) { document.documentElement.textContent = '管理器識別碼不合法'; return; }
-    const shell = document.createElement('html');
-    const head = document.createElement('head'), body = document.createElement('body');
-    shell.append(head, body);
-    document.replaceChild(shell, document.documentElement);
-    node('meta', undefined, head, { name: 'referrer', content: 'strict-origin-when-cross-origin' });
-    node('title', '動畫瘋 TS 下載管理', head);
-    node('style', 'body{font:16px system-ui;max-width:1050px;margin:30px auto;padding:0 18px;color:#222;background:#fafafa}button,input,select{font:inherit;margin:5px;padding:7px}button{cursor:pointer}fieldset{margin:16px 0}label{display:inline-block;margin:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;padding:12px}iframe{width:100%;height:560px;border:1px solid #aaa}progress{width:100%}a{color:#0758a0}', head);
-    manager(body).catch(error => node('p', `管理器啟動失敗：${error.message}`, body));
+    // Stop first, then mount synchronously: stop may leave no root and may prevent
+    // DOMContentLoaded forever. Never wait for that event or run playback here.
+    let body;
+    function startupError(error) {
+      const message = `管理器啟動失敗：${error?.message || String(error)}`;
+      console.error(message, error);
+      try {
+        // Recover even if shell construction failed or the original body detached.
+        let root = document.documentElement;
+        if (!root) { root = document.createElement('html'); document.appendChild(root); }
+        if (!body || body.parentNode !== root) {
+          body = document.createElement('body'); root.appendChild(body);
+        }
+        node('pre', message, body, { role: 'alert' });
+      } catch {
+        // A broken DOM must not turn the error reporter into an unhandled rejection.
+        try { window.alert(message); } catch { /* Console remains the last fallback. */ }
+      }
+    }
+    try {
+      window.stop();
+      const shell = document.createElement('html');
+      const head = document.createElement('head');
+      body = document.createElement('body');
+      shell.append(head, body);
+      // Read after stop; never pass null as replaceChild's oldChild.
+      const root = document.documentElement;
+      if (root) document.replaceChild(shell, root);
+      else document.appendChild(shell);
+      node('meta', undefined, head, { name: 'referrer', content: 'strict-origin-when-cross-origin' });
+      node('title', '動畫瘋 TS 下載管理', head);
+      node('style', 'body{font:16px system-ui;max-width:1050px;margin:30px auto;padding:0 18px;color:#222;background:#fafafa}button,input,select{font:inherit;margin:5px;padding:7px}button{cursor:pointer}fieldset{margin:16px 0}label{display:inline-block;margin:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;padding:12px}iframe{width:100%;height:560px;border:1px solid #aaa}progress{width:100%}a{color:#0758a0}', head);
+      if (!idOK(managerID)) { node('p', '管理器識別碼不合法', body, { role: 'alert' }); return; }
+      manager(body).catch(startupError);
+    } catch (error) { startupError(error); }
     return;
   }
   // Normal playback remains unchanged, including ads and authorization.
