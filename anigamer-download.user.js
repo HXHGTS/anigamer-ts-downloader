@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         動畫瘋 已授權 HLS → TS 管理器
 // @namespace    local.anigamer.authorized-download
-// @version      1.0.1
-// @description  在獨立同站頁面保存正常播放已授權的 VOD MPEG-TS；不繞過廣告、登入或 DRM。
+// @version      1.0.2
+// @description  在目前播放頁的模態窗體保存正常播放已授權的 VOD MPEG-TS；不繞過廣告、登入或 DRM。
 // @match        https://ani.gamer.com.tw/animeVideo.php*
 // @run-at       document-start
 // @grant        GM.getValue
@@ -16,7 +16,6 @@
   'use strict';
   const page = typeof unsafeWindow === 'object' ? unsafeWindow : window;
   const params = new URL(location.href).searchParams;
-  const managerID = params.get('agdManager');
   const PREFIX = 'agd.v1.';
   const MAX_AGE = 6 * 60 * 60 * 1000;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -182,43 +181,53 @@
     if (!seen.has(currentSN)) fail('集數清單尚未載入或未包含本集，請等頁面載入後重試');
     return { title: document.querySelector('h1')?.textContent.trim() || '動畫', currentSN, episodes };
   }
-  if (managerID !== null) {
-    // Stop first, then mount synchronously: stop may leave no root and may prevent
-    // DOMContentLoaded forever. Never wait for that event or run playback here.
-    let body;
-    function startupError(error) {
-      const message = `管理器啟動失敗：${error?.message || String(error)}`;
-      console.error(message, error);
-      try {
-        // Recover even if shell construction failed or the original body detached.
-        let root = document.documentElement;
-        if (!root) { root = document.createElement('html'); document.appendChild(root); }
-        if (!body || body.parentNode !== root) {
-          body = document.createElement('body'); root.appendChild(body);
-        }
-        node('pre', message, body, { role: 'alert' });
-      } catch {
-        // A broken DOM must not turn the error reporter into an unhandled rejection.
-        try { window.alert(message); } catch { /* Console remains the last fallback. */ }
+  let activeModal = null;
+  function openManager(task) {
+    if (activeModal) { activeModal.focus(); return; }
+    const previousFocus = document.activeElement;
+    const scrollBody = document.body;
+    const oldOverflow = scrollBody.style.getPropertyValue('overflow');
+    const oldPriority = scrollBody.style.getPropertyPriority('overflow');
+    const host = node('div', undefined, scrollBody);
+    let dialog, session, closing = false;
+    const focus = () => { dialog?.focus(); };
+    const dispose = () => {
+      session?.dispose();
+      host.remove();
+      if (scrollBody.style.getPropertyValue('overflow') === 'hidden' && scrollBody.style.getPropertyPriority('overflow') === 'important') {
+        if (oldOverflow) scrollBody.style.setProperty('overflow', oldOverflow, oldPriority);
+        else scrollBody.style.removeProperty('overflow');
       }
-    }
+      activeModal = null;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+    const close = async () => {
+      if (closing) return;
+      if (session?.isBusy() && !window.confirm('下載尚未完成，關閉將取消佇列並清理未完成寫入。確定關閉？')) return;
+      closing = true;
+      try { await session?.stop(); dispose(); }
+      catch (error) { closing = false; node('pre', `關閉清理失敗：${error.message}`, dialog, { role: 'alert' }); }
+    };
+    activeModal = { focus };
     try {
-      window.stop();
-      const shell = document.createElement('html');
-      const head = document.createElement('head');
-      body = document.createElement('body');
-      shell.append(head, body);
-      // Read after stop; never pass null as replaceChild's oldChild.
-      const root = document.documentElement;
-      if (root) document.replaceChild(shell, root);
-      else document.appendChild(shell);
-      node('meta', undefined, head, { name: 'referrer', content: 'strict-origin-when-cross-origin' });
-      node('title', '動畫瘋 TS 下載管理', head);
-      node('style', 'body{font:16px system-ui;max-width:1050px;margin:30px auto;padding:0 18px;color:#222;background:#fafafa}button,input,select{font:inherit;margin:5px;padding:7px}button{cursor:pointer}fieldset{margin:16px 0}label{display:inline-block;margin:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;padding:12px}iframe{width:100%;height:560px;border:1px solid #aaa}progress{width:100%}a{color:#0758a0}', head);
-      if (!idOK(managerID)) { node('p', '管理器識別碼不合法', body, { role: 'alert' }); return; }
-      manager(body).catch(startupError);
-    } catch (error) { startupError(error); }
-    return;
+      const shadow = host.attachShadow({ mode: 'open' });
+      node('style', ':host{all:initial}dialog{box-sizing:border-box;font:16px system-ui;color:#222;background:#fafafa;width:min(1050px,94vw);max-height:90vh;overflow:auto;overscroll-behavior:contain;border:1px solid #888;border-radius:10px;padding:20px}dialog::backdrop{background:#0009}button,input,select{font:inherit;margin:5px;padding:7px}button{cursor:pointer}fieldset{margin:16px 0;min-width:0}label{display:inline-block;margin:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;padding:12px}iframe{width:100%;height:560px;border:1px solid #aaa}progress{width:100%}a{color:#0758a0}', shadow);
+      dialog = node('dialog', undefined, shadow, { tabIndex: -1 });
+      dialog.setAttribute('aria-label', '動畫瘋 TS 下載管理');
+      const closeButton = node('button', '關閉下載窗體', dialog, { type: 'button' });
+      closeButton.onclick = close;
+      dialog.addEventListener('cancel', event => { event.preventDefault(); void close(); });
+      // Native modal supplies focus containment and an inert background. Restore
+      // the original overflow value/priority on close without replacing site DOM.
+      dialog.showModal();
+      scrollBody.style.setProperty('overflow', 'hidden', 'important');
+      session = manager(dialog, task);
+      focus();
+    } catch (error) {
+      // Keep a usable close action even if initialization failed after mounting.
+      if (dialog?.open) node('pre', `管理器啟動失敗：${error.message}`, dialog, { role: 'alert' });
+      else { dispose(); window.alert(`管理器啟動失敗：${error.message}`); }
+    }
   }
   // Normal playback remains unchanged, including ads and authorization.
   async function playback() {
@@ -238,19 +247,13 @@
       }
     }
     if (window.top !== window.self) return;
-    const button = node('button', '下載 TS（獨立管理頁）', document.body);
+    const button = node('button', '下載 TS（目前頁面）', document.body, { type: 'button' });
     Object.assign(button.style, { position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647' });
-    button.addEventListener('click', async () => {
-      let data;
-      try { data = episodeData(); } catch (error) { alert(error.message); return; }
-      const id = crypto.randomUUID(), url = new URL(location.href);
-      url.search = new URLSearchParams({ sn: data.currentSN, agdManager: id });
-      // Open synchronously in the user's click; manager polls storage to resolve the write race.
-      const tab = page.open(url.href, '_blank');
-      if (!tab) { alert('新頁被阻擋：請允許此網站彈出視窗後重試'); return; }
+    button.addEventListener('click', () => {
+      if (activeModal) { activeModal.focus(); return; }
       try {
-        await GM.setValue(PREFIX + 'task.' + id, { ...data, created: Date.now(), masterURL: resourceURLs(page).at(-1) || null });
-      } catch { alert('任務寫入失敗，請關閉空白管理頁重試'); }
+        openManager({ ...episodeData(), masterURL: resourceURLs(page).at(-1) || null });
+      } catch (error) { window.alert(`管理器啟動失敗：${error.message}`); }
     });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => playback().catch(console.error), { once: true });
@@ -300,17 +303,10 @@
       }
     }
   }
-  async function manager(body) {
+  function manager(body, task) {
     node('h1', '動畫瘋：已授權 TS 下載管理', body);
     node('p', '只保存您有權取得、正常播放已授權的資源。不繞廣告、付費、地區限制或 DRM。跨集通常需逐集正常操作，並非無人值守下載器。', body);
-    const status = node('pre', '等待播放頁交付任務…', body);
-    let task;
-    for (let i = 0; i < 100; i++) {
-      task = await GM.getValue(PREFIX + 'task.' + managerID);
-      if (task) break;
-      await sleep(100);
-    }
-    if (!task || !Number.isFinite(task.created) || Date.now() - task.created > MAX_AGE) fail('任務不存在／已逾期（6 小時），請回播放頁重新建立');
+    const status = node('pre', '建立下載選項…', body, { role: 'status', ariaLive: 'polite' });
     if (!snOK(task.currentSN) || !Array.isArray(task.episodes) || task.episodes.length > 1000 || !task.episodes.length || task.episodes.some(e => !snOK(e.sn) || typeof e.label !== 'string') || new Set(task.episodes.map(e => e.sn)).size !== task.episodes.length || !task.episodes.some(e => e.sn === task.currentSN)) fail('任務資料不合法');
     node('h2', task.title, body);
     const controls = node('fieldset', undefined, body);
@@ -331,20 +327,28 @@
     const cancel = node('button', '取消本次佇列', body, { disabled: true });
     const progress = node('progress', undefined, body, { max: 1, value: 0 });
     const preparation = node('section', undefined, body);
-    let directory = null, controller = null, busy = false;
+    let directory = null, controller = null, busy = false, disposed = false, picking = false;
+    let queueDone = Promise.resolve();
     status.textContent = '就緒。請先選資料夾，再開始；若本集尚未正常播放，仍需準備授權。';
     choose.onclick = async () => {
+      if (disposed || busy || picking) return;
+      picking = true; choose.disabled = true; start.disabled = true;
       try {
+        // Invoke directly in this click, before any await. Keep the returned handle
+        // in this closure; never clone it into storage or another sandbox/window.
         if (typeof page.showDirectoryPicker !== 'function') fail('需桌面 Chrome／Edge 的 File System Access API；無法在此瀏覽器保存');
-        directory = await page.showDirectoryPicker({ mode: 'readwrite', id: 'agd-download' });
+        const selected = await page.showDirectoryPicker({ mode: 'readwrite', id: 'agd-download' });
+        if (disposed) return;
+        directory = selected;
         status.textContent = `已選資料夾：${directory.name}（handle 只保存在此頁記憶體）`;
-      } catch (error) { status.textContent = `選資料夾未完成：${error.message}`; }
+      } catch (error) { if (!disposed) status.textContent = `選資料夾未完成：${error.message}`; }
+      finally { picking = false; choose.disabled = false; start.disabled = false; }
     };
     cancel.onclick = () => controller?.abort();
     const beforeUnload = event => { if (busy) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', beforeUnload);
-    start.onclick = async () => {
-      if (busy) return;
+    start.onclick = () => {
+      if (disposed || busy || picking) return;
       if (!directory) { status.textContent = '請先點選資料夾；瀏覽器權限必須來自使用者點擊。'; return; }
       let queue;
       try {
@@ -353,6 +357,7 @@
       } catch (error) { status.textContent = error.message; return; }
       busy = true; controls.disabled = true; cancel.disabled = false;
       controller = new AbortController();
+      queueDone = (async () => {
       let completed = 0;
       try {
         for (const episode of queue) {
@@ -379,6 +384,13 @@
       } finally {
         preparation.replaceChildren(); busy = false; controls.disabled = false; cancel.disabled = true; controller = null;
       }
+      })();
+      return queueDone;
+    };
+    return {
+      isBusy: () => busy,
+      async stop() { disposed = true; controller?.abort(); await queueDone; },
+      dispose() { disposed = true; directory = null; preparation.replaceChildren(); window.removeEventListener('beforeunload', beforeUnload); }
     };
   }
   async function prepare(episode, signal, container, status) {

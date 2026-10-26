@@ -1,69 +1,63 @@
 # 动画疯 Tampermonkey TS 下载管理器
 
-配套脚本：`anigamer-download.user.js`，版本 1.0.1。
+配套脚本：`anigamer-download.user.js`，版本 **1.0.2**。
 
-## 1.0.1 管理页启动健壮性修复
+## 1.0.2 当前页模态窗体
 
-- `document-start` 时文档根节点可能尚未建立；管理分支在 `window.stop()` 后重新读取根节点，有根则替换、无根则直接挂载，不等待可能不再触发的 `DOMContentLoaded`。无效管理 ID 也先建立可见页面再提示。
-- stop、DOM 建壳与异步管理 UI 的异常统一显示为「管理器啟動失敗」，DOM 报错提示本身失败时退回 alert／控制台。没有改变播放、任务交付、下载、授权或加密逻辑。
-- 这是启动健壮性修复，不是已确认的现场根因：调用方现场用 1.0.0 新播放页点击按钮及手工管理 URL 均正常显示，未复现原空白。
-- 新增无依赖 `test-manager-dom.cjs`。运行 `node test-manager-dom.cjs` 可验证 9 项隔离 DOM 场景；`node test-manager-dom.cjs --baseline` 额外从 Git HEAD 读取旧版，在 mock 的根缺失、stop 清除根、无根且 ID 无效条件下复现旧版未捕获异常（HEAD 升级后不再适用旧版对照）。测试不访问网站、不下载、不执行解密。
-- 本次语法检查及 9 项隔离测试通过；mock 不证明真实浏览器解析器／Tampermonkey 注入时序，不能保证阻止脚本注入之前已执行的网站脚本。1.0.1 的实际安装与现场浏览器验证、完整下载验证仍需另行执行。
+点击播放页右下角「下載 TS（目前頁面）」直接创建当前页的原生 `dialog`，内容样式隔离在 Shadow Root 中。不打开下载管理标签页，不停止页面加载，不替换网站文档根或播放器，不自动操作播放、广告或权限。重复点击只聚焦现有窗体，不创建第二个管理器／队列。
 
-## 作用与边界
+窗体独立滚动、原生模态焦点约束；背景正文暂时锁定滚动，关闭恢复原 overflow 值及优先级，焦点回到原按钮。关闭按钮和 Escape 使用同一流程：闲置时直接关闭；下载期间先确认，确认后 abort 并等待当前队列清理，再移除窗体。拒绝确认则继续下载。关闭后可重新打开，目录授权 handle 不跨窗体保存。
 
-在**独立的同站管理标签页**中，把您有权访问且通过网站正常播放流程取得授权的 HLS VOD 保存成 `.ts`。播放页不会被替换，管理页在 document-start 停止网站加载并建立独立界面，不加载自己的播放器或后台广告。
+已移除旧 `agdManager` 管理分支及 GM 任务交付轮询。当前集任务直接传给当前页 UI；独立播放准备页的 `agdPrepare` 交接仍保留，但只在用户点击准备链接时打开，不自动打开管理页。
 
-不调用私有 token API、不提取 Cookie、不生成签名、不模拟授权、不自动点击或跳过广告、不解除 DRM、付费或地区限制。请遵守网站条款与版权规定，勿传播下载内容。
+## 边界
 
-## 安装
+仅保存您有权取得、通过网站正常播放已授权的 HLS VOD MPEG-TS。不要传播下载内容；请遵守网站条款与版权规定。
 
-1. 使用桌面版 Chrome 或 Edge，安装并启用 Tampermonkey。
-2. 在 Tampermonkey 中新建脚本，把配套 `.user.js` 全文粘贴保存；也可通过浏览器／扩展支持的本地脚本安装方式安装。
-3. 按 Tampermonkey 当前版本的提示启用用户脚本权限，必要时允许扩展在该网站运行，刷新动画疯播放页。
-4. 脚本仅匹配 `https://ani.gamer.com.tw/animeVideo.php*`。不需要额外服务器、Node、下载软件或跨域请求授权。
+不调用私有 token API、不提取 Cookie、不生成签名、不模拟授权、不自动点击或跳过广告，不解除 DRM、付费或地区限制。原播放器不会被暂停、替换或销毁；模态背景不可交互期间，原播放仍可能继续。
 
-## 使用
+## 安装与使用
 
-1. 正常登录并打开目标集，正常完成网站要求的广告与播放操作。不要关闭原播放页。
-2. 点击右下角「下載 TS（獨立管理頁）」。允许网站弹出窗口，新标签页地址包含随机 `agdManager`。
-3. 管理页选择精确画质（360 / 540 / 720 / 1080p），选择本集、本季、指定数字集数或手动勾选。
-4. 指定集数格式例如 `1-3,5`。只匹配页面的纯数字标签；SP、OVA、小数标签等请选「手動勾選」。本季仅指原页面 `.season a[data-ani-video-sn]` 实际列出的集数，不会扫描其他季。
-5. **先点击「選擇輸出資料夾」**，在浏览器原生选择器中给予读写权限，然后点击开始。文件夹 handle 只在当前管理页内存中保存，不写 GM storage，也不跨刷新恢复。
-6. 当前集优先使用点击按钮时已出现的正常主清单 URL。其他集需要正常准备资源：管理页显示同源播放 iframe，您应手动完成登录、广告及播放。
-7. 如果 iframe 被限制、自动播放被阻止或无法完成操作，点击框架上方「在獨立分頁正常播放／準備本集」。在新播放页正常操作后，脚本通过随机任务 ID 和 GM storage 把主清单交回管理页。必须保持管理页开着；准备标签页不会被强制关闭，请自行暂停或关闭，避免额外播放。
-8. 每集最多等待正常资源 10 分钟。超时会明确停止，不自动跳过集数，也不声称支持无人值守。本集 URL 失效时，请回原页面正常播放，再点击下载建立新任务。
-9. 保存后请使用 VLC 等播放器检查时长、声音和画面。输出是 TS，不是转封装 MP4。
+1. 桌面 Chrome／Edge 安装并启用 Tampermonkey，将 `.user.js` 全文粘贴保存，按扩展提示启用脚本权限，刷新动画疯播放页。匹配范围为 `https://ani.gamer.com.tw/animeVideo.php*`。
+2. 正常登录、完成广告及播放操作，点击「下載 TS（目前頁面）」。不需要允许下载管理弹窗。
+3. 选择精确画质（360／540／720／1080p）、本集、本季、指定数字集数或手动勾选。指定格式如 `1-3,5`，只匹配纯数字标签；SP／OVA／小数标签请手动勾选。本季仅指当前页面实际列出的集数，不扫描其他季。
+4. **直接点击「選擇輸出資料夾」**，在浏览器原生选择器中给予读写权限，再开始下载。选择器在点击回调中、任何 await 之前调用；返回的 handle 仅保留在原闭包内，不复制到另一 sandbox／窗口或 GM storage。选择器打开期间禁止开始队列，关闭窗体后的迟到结果会被忽略。
+5. 当前集优先使用点击时已出现的正常主清单。其他集需在窗体内的同源播放 iframe 中正常完成登录、广告及播放；不会自动点击或设置 autoplay。
+6. 若 iframe 被限制，可手动点击「在獨立分頁正常播放／準備本集」。脚本通过随机准备 ID 与 GM storage 交回正常资源。准备页不会被强制关闭，请自行暂停／关闭，避免额外播放；保持下载窗体所在页打开。
+7. 每集最多等待正常资源 10 分钟；失败明确停止，不自动跳过，不支持无人值守。授权过期时重新正常播放，再关闭并重开下载窗体。
+8. 完成后用 VLC 等检查时长与音画。输出是 TS，不是转封装 MP4。
 
-## 文件、进度与取消
+## 写入、进度、取消
 
-- 串行按集、按片段下载，逐段写入 `FileSystemWritableFileStream`；不把整集拼成 Blob。内存只保留当前段及其网络缓冲／解密副本，另有清单元数据和当前密钥。
-- 显示当前集、分段进度和累计 MiB；完成集单独列出。
-- 文件名含标题、集数、画质和随机 UUID。建立前探测同名文件，不会有意覆盖已有文件。浏览器目录 API 没有跨程序原子的 create-if-absent；极端情况下其他程序恰好抢占同一 UUID 名称仍存在理论竞争风险。
-- 单个片段限制 64 MiB，清单限制 4 MiB，密钥必须恰好 16 bytes。每次请求含响应体最长 30 秒，最多 3 次尝试；大多数 HTTP 4xx 直接报错。
-- 点击取消会终止请求，并在写入／解密边界检查取消；不保证中断正在进行的一次磁盘写入或 WebCrypto 运算。已完成集保留。
-- 失败或取消会尝试 `writer.abort()`，通常丢弃未提交内容，但新建文件可能留下 **0-byte 文件**；异常关闭、浏览器崩溃或实现差异也可能留下未完成内容。错误消息会给出文件名，请人工检查删除。为防止文件被其他程序替换后误删，脚本**不会按文件名自动删除**。
-- 下载期间请勿刷新、关闭管理页、撤回文件夹权限或让系统休眠。关闭提示不能保证阻止所有异常退出。无断点续传，重试使用新文件名。
+- 串行逐集逐段写入 FileSystemWritableFileStream，不把整集拼成 Blob。显示分段进度、累计 MiB 和已完成集。
+- 文件名含标题、集数、画质和随机 UUID，建立前探测同名文件。目录 API 没有跨程序原子的 create-if-absent，理论上仍存在极端竞争风险。
+- 单段上限 64 MiB、清单 4 MiB、密钥必须 16 bytes；每次请求含响应体最长 30 秒，最多尝试 3 次，大多数 HTTP 4xx 直接停止。
+- 取消中止网络请求，在写入／解密边界检查取消；无法立即中断已在进行的单次磁盘写入或 WebCrypto 运算。关闭窗体等待队列退出，包括 writer.abort 与准备区清理；已经完成的集保留。
+- 失败／取消会尝试 writer.abort。新建文件可能留下 0-byte 或其他未完成文件，错误信息给出文件名，需人工检查。为防其他程序替换文件后的误删，不按文件名自动删除。
+- 下载中不要刷新、关闭所在播放标签页、撤回权限或休眠。beforeunload 提示不保证能拦截所有异常退出；无断点续传，重试生成新文件名。
 
-## 支持的 HLS 与安全设计
+## HLS 与存储设计
 
-- 从正常播放页的 Resource Timing 中查找 `playlist_advance.m3u8`，不硬编码 CDN 签名、token 或媒体地址。主清单按 `RESOLUTION` 高度精确选择；缺少目标画质就报错，不静默降级。
-- 仅支持带 `ENDLIST` 的 VOD MPEG-TS、AVC/AAC 常规 variant。不支持直播、fMP4 `EXT-X-MAP`、BYTERANGE、低延迟分段、discontinuity／GAP、外置音频／多视角或其他复杂清单。部分虽可正常播放的清单会被保守拒绝。
-- 支持明文分段以及普通 `AES-128`、`KEYFORMAT=identity`。密钥通过浏览器普通已授权 `fetch` 获取，WebCrypto AES-CBC 验证并移除 PKCS#7 padding；显式 IV 为 128 位十六进制，无 IV 时使用 MEDIA-SEQUENCE 加分段索号的大端 128 位 IV。
-- 拒绝 SAMPLE-AES、非 identity KEYFORMAT、DRM 及未知加密。解密后逐个 188-byte TS 包检查 `0x47` 同步字节，拒绝 HTML、JSON、fMP4 或损坏数据，不写入未经验证的段。
-- 使用页面原生 `fetch` 与正常浏览器 credentials/CORS，不使用 GM_xmlhttpRequest 绕过 CORS。网站若依赖播放器特殊请求头、Referrer 或不同跨域策略而不能用普通 fetch 读取，脚本会报错，不伪造绕过。
-- Tampermonkey 使用 `unsafeWindow` 访问页面的 fetch、performance、窗口与 File System Access API；管理 UI 在脚本沙箱中建立。不同浏览器／Tampermonkey 沙箱版本可能影响 API 桥接；本版本尚未完成实际安装后的全面桥接回归。
-- 动态页面内容全部经 `textContent`，不拼接 HTML。资源 URL 限 HTTPS；链接仅由同站路径和校验过的集数构造。
-- GM grants：`GM.getValue`、`GM.setValue`、`GM.deleteValue`、`GM.listValues`、`unsafeWindow`。GM storage 保存任务元数据及短期签名资源 URL，不保存 Cookie、密钥、输出目录 handle 或视频。新管理页轮询最多 10 秒处理开页／写任务竞态。
-- 任务 6 小时有效。旧记录在后续正常播放页加载时清理，并非到点自动后台清理。若需立即清除签名 URL，请使用 Tampermonkey 的该脚本存储管理功能清除记录；不要把存储内容发给别人。
+- 从正常播放的 Resource Timing 查找 `playlist_advance.m3u8`，不硬编码签名、token 或 CDN 地址；主清单按高度精确选择，不静默降级。
+- 仅支持 ENDLIST VOD、AVC/AAC MPEG-TS。拒绝直播、fMP4、BYTERANGE、低延迟、discontinuity／GAP、外置音轨、多视角或复杂清单。
+- 普通 AES-128 identity 使用正常已授权 fetch 获取密钥、WebCrypto AES-CBC 验证并移除 PKCS#7 padding。显式 IV 为 128 位十六进制；未指定时按 MEDIA-SEQUENCE 加片段序号生成大端 IV。拒绝 SAMPLE-AES、非 identity、DRM 和未知加密。逐个 188-byte TS 包检查同步字节。
+- 原生页面 fetch 使用正常 credentials／CORS，不使用 GM_xmlhttpRequest，不伪造请求头绕过限制。动态内容用 textContent，资源 URL 限 HTTPS。
+- unsafeWindow 用于页面 fetch／performance／File System Access API，UI 在脚本沙箱创建。不同 Tampermonkey／浏览器版本的桥接兼容性需实机验证。
+- GM grants：getValue、setValue、deleteValue、listValues、unsafeWindow。仅准备页交接保存集数及短期签名资源 URL，不保存 Cookie、密钥、目录 handle 或视频。记录最长保留 6 小时，后续播放页加载清理，不是定时后台清理。旧版任务记录也会按过期时间清理；立即清理可用扩展存储管理，勿分享存储内容。
 
-## 已验证与尚未验证
+## 本次验证与局限
 
-本次现场已由调用方确认：测试页 `https://ani.gamer.com.tw/animeVideo.php?sn=49789` 标题为「貓與龍 [1]」，DOM 可读第 1–12 集；播放器使用 blob、无 mediaKeys；正常资源列表有主清单，普通已认证 fetch 为 200；主清单有 360/540/720/1080，子清单是普通 AES-128 identity HLS；安全上下文、`crypto.subtle`、`showDirectoryPicker` 可用，无 meta CSP。**未改动现场暂停的原播放器。**
+运行：
 
-本脚本已通过：
+```text
+node --check anigamer-download.user.js
+node --check test-manager-dom.cjs
+node test-manager-dom.cjs
+git diff --check
+```
 
-- `node --check` 语法检查。
-- 隔离 VM 中 17 项纯函数／WebCrypto 测试：精确画质、相对地址、缺失画质、外部音轨拒绝、AES 密钥 URI 和序号、显式 IV、大端 IV、直播／DRM／SAMPLE-AES／fMP4／BYTERANGE／discontinuity 拒绝、TS 同步检查、集数区间与特殊集处理、AES-CBC padding 往返。
+测试需要 **jsdom**，仅测试使用，脚本运行不依赖 Node 或 jsdom。可在外部临时目录 `npm install --prefix <temp-directory> --no-audit --no-fund jsdom`，设置 `NODE_PATH=<temp-directory>/node_modules` 后运行；无需把依赖加入仓库。
 
-**尚未执行全片或全季下载测试**，未声称已验证实际输出文件的全片音画、所有 Tampermonkey 沙箱组合、iframe／独立准备标签页交接、文件夹授权及取消后的真实磁盘行为。需在您自己的正常授权会话中验证。站点结构、HLS 格式与浏览器策略变化可能导致停止工作。
+8 组自动测试覆盖真实 jsdom DOM／事件树的当前页挂载、保留站点节点、重复点击、焦点恢复、滚动样式恢复、Escape cancel 事件、同步 picker 调用、迟到选择结果、可见错误、双队列防护、下载中拒绝／确认关闭、网络 abort 及 beforeunload 清理；并覆盖画质、HLS 拒绝条件、IV、TS、集数选择等纯函数断言。
+
+**诚实范围：**jsdom 不实现浏览器原生 dialog top-layer／inert／焦点约束、File System Access 或网络下载，这些 API 使用明确测试替身。没有进行真实浏览器／Tampermonkey 安装、原生 Escape 键分派、原生目录授权、真实文件 abort、准备 iframe／独立播放页交接、全片或全季音画验证。不会把 DOM 测试称为端到端测试。站点结构、清单格式及浏览器策略变化仍可能导致失败。
